@@ -5,6 +5,7 @@ from typing import Any
 
 from eth_account import Account
 from web3 import Web3
+from web3.middleware import ExtraDataToPOAMiddleware
 
 from app.config import settings
 from app.services.hashing import sha256_to_bytes32
@@ -41,6 +42,9 @@ class BlockchainService:
         self.address = Web3.to_checksum_address(settings.CONTRACT_ADDRESS)
 
         self.w3 = Web3(Web3.HTTPProvider(settings.RPC_URL))
+        # Polygon (y cualquier red PoA) tiene extraData > 32 bytes en los bloques.
+        # Sin este middleware web3.py lanza error al leer cabeceras de bloque.
+        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         self.contract = self.w3.eth.contract(address=self.address, abi=self.abi)
         self.admin = Account.from_key(settings.ADMIN_PRIVATE_KEY)
 
