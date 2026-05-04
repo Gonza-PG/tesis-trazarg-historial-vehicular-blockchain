@@ -29,7 +29,21 @@ def crear_concesionaria(payload: ConcesionariaCreate, db: Session = Depends(get_
     bc = get_blockchain()
     address, pk = bc.crear_wallet()
 
-    bc.autorizar_concesionaria(address, payload.nombre)
+    try:
+        bc.autorizar_concesionaria(address, payload.nombre)
+    except Exception as e:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"No se pudo autorizar la wallet en el contrato: {e}. "
+            f"Verificá que ADMIN_PRIVATE_KEY corresponda al admin del contrato "
+            f"({bc.admin_address()}).",
+        )
+
+    if not bc.es_concesionaria_autorizada(address):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "La autorización on-chain no quedó registrada. Revisá la red y reintentá.",
+        )
 
     try:
         bc.fondear_wallet(address, "0.5")
@@ -80,3 +94,51 @@ def fondear(concesionaria_id: str, monto_matic: str = "0.5", db: Session = Depen
     bc = get_blockchain()
     res = bc.fondear_wallet(c.wallet_address, monto_matic)
     return {"ok": True, **res, "balance": bc.balance_matic(c.wallet_address)}
+
+
+@router.post("/concesionarias/{concesionaria_id}/autorizar", dependencies=[Depends(_check_admin)])
+def reautorizar(concesionaria_id: str, db: Session = Depends(get_db)):
+    """
+    Re-autoriza la wallet de una concesionaria existente en el contrato.
+    Útil cuando la autorización inicial falló silenciosamente y los registros
+    revierten con 'No autorizado. Solo red oficial.'.
+    """
+    c = db.query(Concesionaria).filter(Concesionaria.id == concesionaria_id).first()
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontrada")
+
+    bc = get_blockchain()
+    if bc.es_concesionaria_autorizada(c.wallet_address):
+        return {"ok": True, "ya_autorizada": True, "wallet": c.wallet_address}
+
+    try:
+        res = bc.autorizar_concesionaria(c.wallet_address, c.nombre)
+    except Exception as e:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"No se pudo autorizar: {e}. Admin del contrato: {bc.admin_address()}.",
+        )
+
+    if not bc.es_concesionaria_autorizada(c.wallet_address):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "La autorización on-chain no quedó registrada tras la transacción.",
+        )
+
+    return {"ok": True, "ya_autorizada": False, "wallet": c.wallet_address, **res}
+
+
+@router.get("/concesionarias/{concesionaria_id}/estado", dependencies=[Depends(_check_admin)])
+def estado_concesionaria(concesionaria_id: str, db: Session = Depends(get_db)):
+    c = db.query(Concesionaria).filter(Concesionaria.id == concesionaria_id).first()
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontrada")
+    bc = get_blockchain()
+    return {
+        "id": str(c.id),
+        "nombre": c.nombre,
+        "wallet_address": c.wallet_address,
+        "autorizada_on_chain": bc.es_concesionaria_autorizada(c.wallet_address),
+        "balance_matic": bc.balance_matic(c.wallet_address),
+        "admin_contrato": bc.admin_address(),
+    }

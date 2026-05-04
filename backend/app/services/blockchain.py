@@ -10,6 +10,26 @@ from app.config import settings
 from app.services.hashing import sha256_to_bytes32
 
 
+def _extract_revert_reason(err: Exception) -> str:
+    msg = str(err) or err.__class__.__name__
+    for attr in ("message", "args"):
+        val = getattr(err, attr, None)
+        if isinstance(val, str) and val:
+            msg = val
+            break
+        if isinstance(val, (list, tuple)) and val:
+            for item in val:
+                if isinstance(item, dict) and isinstance(item.get("message"), str):
+                    msg = item["message"]
+                    break
+                if isinstance(item, str) and item:
+                    msg = item
+                    break
+    if "execution reverted:" in msg:
+        msg = msg.split("execution reverted:", 1)[1].strip().strip("'\"")
+    return msg.strip() or "transacción revertida"
+
+
 class BlockchainService:
     def __init__(self):
         abi_path = Path(settings.CONTRACT_ABI_PATH)
@@ -32,6 +52,14 @@ class BlockchainService:
     def _send(self, signer_pk: str, fn_name: str, *args) -> dict[str, Any]:
         signer = Account.from_key(signer_pk)
         fn = getattr(self.contract.functions, fn_name)(*args)
+
+        # Pre-flight: simular la llamada para detectar reverts antes de gastar gas.
+        # Si revierte, web3 levanta ContractLogicError con el mensaje del require().
+        try:
+            fn.call({"from": signer.address})
+        except Exception as e:
+            raise RuntimeError(_extract_revert_reason(e)) from e
+
         nonce = self.w3.eth.get_transaction_count(signer.address)
         tx = fn.build_transaction({
             "from": signer.address,
@@ -44,6 +72,26 @@ class BlockchainService:
         signed = signer.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
+
+        if receipt.status != 1:
+            # Reintento como eth_call al bloque del receipt para extraer la razón.
+            try:
+                self.w3.eth.call(
+                    {
+                        "to": tx["to"],
+                        "from": signer.address,
+                        "data": tx["data"],
+                        "value": tx.get("value", 0),
+                    },
+                    block_identifier=receipt.blockNumber,
+                )
+                reason = "transacción revertida sin razón"
+            except Exception as e:
+                reason = _extract_revert_reason(e)
+            raise RuntimeError(
+                f"Transacción revertida on-chain ({tx_hash.hex()}): {reason}"
+            )
+
         block = self.w3.eth.get_block(receipt.blockNumber)
         return {
             "tx_hash": tx_hash.hex(),
@@ -59,6 +107,16 @@ class BlockchainService:
             Web3.to_checksum_address(wallet_address),
             nombre,
         )
+
+    def es_concesionaria_autorizada(self, wallet_address: str) -> bool:
+        return bool(
+            self.contract.functions.concesionariasOficiales(
+                Web3.to_checksum_address(wallet_address)
+            ).call()
+        )
+
+    def admin_address(self) -> str:
+        return self.contract.functions.admin().call()
 
     def fondear_wallet(self, wallet_address: str, monto_matic: str) -> dict[str, Any]:
         nonce = self.w3.eth.get_transaction_count(self.admin.address)

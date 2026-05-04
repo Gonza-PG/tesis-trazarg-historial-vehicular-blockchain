@@ -26,19 +26,23 @@ async def registrar_service(
     if tipo_servicio == 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tipo 0 reservado para alta")
 
-    v = db.query(Vehiculo).filter(Vehiculo.vin == vin).first()
+    v = (
+        db.query(Vehiculo)
+        .filter((Vehiculo.vin == vin) | (Vehiculo.patente == vin))
+        .first()
+    )
     if not v:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vehiculo no registrado")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vehiculo no registrado (VIN o patente no encontrados)")
 
     contenido = await archivo.read()
     hash_hex = sha256_bytes(contenido)
-    key = f"vehiculos/{vin}/service-{int(datetime.now(timezone.utc).timestamp())}-{archivo.filename}"
+    key = f"vehiculos/{v.vin}/service-{int(datetime.now(timezone.utc).timestamp())}-{archivo.filename}"
     url = upload_evidencia(contenido, key, archivo.content_type or "application/octet-stream")
 
     bc = get_blockchain()
     pk = decrypt_pk(current.wallet_pk_enc)
     try:
-        res = bc.registrar_servicio(pk, vin, kilometraje, tipo_servicio, hash_hex)
+        res = bc.registrar_servicio(pk, v.vin, kilometraje, tipo_servicio, hash_hex)
     except Exception as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Error en blockchain: {e}")
 

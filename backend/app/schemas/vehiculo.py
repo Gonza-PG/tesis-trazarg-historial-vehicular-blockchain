@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class VehiculoCreate(BaseModel):
     vin: str = Field(min_length=5, max_length=32)
-    patente: str | None = None
+    patente: str = Field(min_length=1, max_length=16)
     marca: str
     modelo: str
     anio: int = Field(ge=1980, le=2100)
@@ -15,7 +15,7 @@ class VehiculoCreate(BaseModel):
 class VehiculoPublic(BaseModel):
     id: str
     vin: str
-    patente: str | None
+    patente: str | None = None
     marca: str
     modelo: str
     anio: int
