@@ -14,30 +14,59 @@ from app.services.storage import upload_evidencia
 router = APIRouter(prefix="/vehiculos", tags=["vehiculos"])
 
 
+ZERO_HASH_HEX = "0" * 64
+
+
 @router.post("", response_model=VehiculoPublic, status_code=status.HTTP_201_CREATED)
 async def alta_vehiculo(
     vin: str = Form(...),
-    patente: str | None = Form(None),
+    patente: str = Form(..., min_length=1),
     marca: str = Form(...),
     modelo: str = Form(...),
     anio: int = Form(...),
     color: str | None = Form(None),
     km_inicial: int = Form(0),
-    archivo: UploadFile = File(...),
+    archivo: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     current: Concesionaria = Depends(get_current_concesionaria),
 ):
+    patente = patente.strip()
+    if not patente:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "La patente es obligatoria")
+
     if db.query(Vehiculo).filter(Vehiculo.vin == vin).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "VIN ya registrado")
-
-    contenido = await archivo.read()
-    hash_hex = sha256_bytes(contenido)
-    key = f"vehiculos/{vin}/alta-{int(datetime.now(timezone.utc).timestamp())}-{archivo.filename}"
-    url = upload_evidencia(contenido, key, archivo.content_type or "application/octet-stream")
+    if db.query(Vehiculo).filter(Vehiculo.patente == patente).first():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Patente ya registrada")
 
     bc = get_blockchain()
+
+    # Falla rápida si la wallet no está autorizada en el contrato.
+    if not bc.es_concesionaria_autorizada(current.wallet_address):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "La wallet de la concesionaria no está autorizada en el contrato. "
+            "Pedile al administrador que ejecute /admin/concesionarias/{id}/autorizar.",
+        )
+
+    hash_hex = ZERO_HASH_HEX
+    archivo_url: str | None = None
+    archivo_nombre: str | None = None
+    if archivo is not None and archivo.filename:
+        contenido = await archivo.read()
+        if contenido:
+            hash_hex = sha256_bytes(contenido)
+            key = f"vehiculos/{vin}/alta-{int(datetime.now(timezone.utc).timestamp())}-{archivo.filename}"
+            archivo_url = upload_evidencia(
+                contenido, key, archivo.content_type or "application/octet-stream"
+            )
+            archivo_nombre = archivo.filename
+
     pk = decrypt_pk(current.wallet_pk_enc)
-    res = bc.registrar_vehiculo(pk, vin, km_inicial, hash_hex)
+    try:
+        res = bc.registrar_vehiculo(pk, vin, km_inicial, hash_hex)
+    except Exception as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Error en blockchain: {e}")
 
     v = Vehiculo(
         vin=vin,
@@ -59,8 +88,8 @@ async def alta_vehiculo(
         tipo_servicio=0,
         kilometraje=km_inicial,
         descripcion="Alta 0km",
-        archivo_url=url,
-        archivo_nombre=archivo.filename,
+        archivo_url=archivo_url,
+        archivo_nombre=archivo_nombre,
         hash_evidencia=hash_hex,
         tx_hash=res["tx_hash"],
         block_number=res["block_number"],

@@ -97,12 +97,13 @@ export default function RegistrarServicio() {
 
       <form onSubmit={onSubmit} className="card p-6 space-y-4">
         <div>
-          <label className="label">VIN del vehiculo</label>
+          <label className="label">VIN o patente del vehiculo</label>
           <input
             className="input font-mono"
             name="vin"
             value={form.vin}
             onChange={onChange}
+            placeholder="Ej: VK12345678 o LSH900"
             required
           />
         </div>

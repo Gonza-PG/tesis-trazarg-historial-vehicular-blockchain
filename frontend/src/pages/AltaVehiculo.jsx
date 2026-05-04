@@ -17,7 +17,6 @@ export default function AltaVehiculo() {
     color: "",
     km_inicial: 0,
   });
-  const [archivo, setArchivo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [resultado, setResultado] = useState(null);
@@ -26,16 +25,11 @@ export default function AltaVehiculo() {
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    if (!archivo) {
-      setError("Adjunta la orden de patentamiento (PDF/imagen)");
-      return;
-    }
     setError(null);
     setLoading(true);
 
     const fd = new FormData();
     Object.entries(form).forEach(([k, v]) => fd.append(k, v));
-    fd.append("archivo", archivo);
 
     try {
       const res = await api.altaVehiculo(session.token, fd);
@@ -87,26 +81,12 @@ export default function AltaVehiculo() {
       <form onSubmit={onSubmit} className="card p-6 space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <Field label="VIN" name="vin" value={form.vin} onChange={onChange} required />
-          <Field label="Patente (opcional)" name="patente" value={form.patente} onChange={onChange} />
+          <Field label="Patente" name="patente" value={form.patente} onChange={onChange} required />
           <Field label="Marca" name="marca" value={form.marca} onChange={onChange} required />
           <Field label="Modelo" name="modelo" value={form.modelo} onChange={onChange} required />
           <Field label="Año" name="anio" type="number" value={form.anio} onChange={onChange} required />
           <Field label="Color" name="color" value={form.color} onChange={onChange} />
           <Field label="Km inicial" name="km_inicial" type="number" value={form.km_inicial} onChange={onChange} />
-        </div>
-
-        <div>
-          <label className="label">Orden de patentamiento (PDF / imagen)</label>
-          <input
-            type="file"
-            accept=".pdf,image/*"
-            onChange={(e) => setArchivo(e.target.files?.[0] || null)}
-            className="block w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:text-slate-700 hover:file:bg-slate-50"
-            required
-          />
-          <p className="text-xs text-slate-500 mt-1">
-            Se almacenara cifrado y su hash SHA-256 quedara en la blockchain.
-          </p>
         </div>
 
         {error && (
